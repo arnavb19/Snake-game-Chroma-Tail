@@ -17,6 +17,7 @@ import {
 import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
 import FruitManager from '../systems/FruitManager.js';
 import PaintLayer from '../systems/PaintLayer.js';
+import Chain from '../systems/Chain.js';
 
 // Turn a colour index (one of PAINTS, or GRAPHITE) into a colour value
 function getPaintColor(colorIndex) {
@@ -65,13 +66,13 @@ export default class GameScene extends Phaser.Scene {
     this.createPaintTexture();
 
     this.snake = new Snake(START_COL, START_ROW, START_LENGTH);
-    this.snakeColorIndex = GRAPHITE; // becomes the last fruit's colour (step 6 moves this into Chain)
+    this.chain = new Chain(); // also holds the snake's colour
     this.paintLayer = new PaintLayer(GRID_COLS, GRID_ROWS);
     this.turnQueue = [];
     this.isOver = false;
     this.isPaused = false;
 
-    // FRUIT is the plain count. SCORE equals it until chains arrive in step 6.
+    // FRUIT is the plain count of fruit eaten. SCORE adds up the chain points.
     this.fruitEaten = 0;
     this.score = 0;
     this.bestScore = loadBestScore();
@@ -157,9 +158,9 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    // The snake takes the fruit's colour before painting the cell it enters
+    // Score first, so the snake has the fruit's colour when it paints the cell it enters
     if (isEating) {
-      this.snakeColorIndex = this.fruit.getFruitAt(next).colorIndex;
+      this.scoreFruit(next);
     }
 
     this.snake.move(direction, isEating);
@@ -172,16 +173,21 @@ export default class GameScene extends Phaser.Scene {
   }
 
   paintCell(cell) {
-    this.paintLayer.paint(cell.x, cell.y, this.snakeColorIndex);
+    this.paintLayer.paint(cell.x, cell.y, this.chain.colorIndex);
     this.drawPaintChanges();
   }
 
-  eatFruit(cell) {
-    this.drawSplat(cell);
+  scoreFruit(cell) {
+    const points = this.chain.onEat(this.fruit.getFruitAt(cell).colorIndex);
     this.fruitEaten += 1;
-    this.score += 1;
+    this.score += points;
     this.bestScore = Math.max(this.bestScore, this.score);
     this.updateHud();
+  }
+
+  // Splat, replacement fruit and speed-up
+  eatFruit(cell) {
+    this.drawSplat(cell);
 
     const hasRoom = this.fruit.eatAt(cell, this.snake);
     this.drawFruit();
@@ -225,7 +231,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.fruitText = this.createHudItem('FRUIT', slotCentre(0), centreY);
     this.scoreText = this.createHudItem('SCORE', slotCentre(1), centreY);
-    this.createChainPlaceholder(slotCentre(2), centreY);
+    this.createChainItem(slotCentre(2), centreY);
     this.bestText = this.createHudItem('BEST', slotCentre(3), centreY);
     this.updateHud();
   }
@@ -246,14 +252,13 @@ export default class GameScene extends Phaser.Scene {
     }).setOrigin(0, 0.5);
   }
 
-  // Grey swatch and ×1 for now. Step 6 makes this show the real chain.
-  createChainPlaceholder(x, y) {
-    const g = this.add.graphics();
-    g.fillStyle(COLORS.graphite);
-    g.fillRect(x - HUD_GAP / 2 - CHAIN_SWATCH_SIZE, y - CHAIN_SWATCH_SIZE / 2,
-      CHAIN_SWATCH_SIZE, CHAIN_SWATCH_SIZE);
+  // A swatch in the current colour, then the multiplier (e.g. ■ ×3)
+  createChainItem(x, y) {
+    this.chainSwatch = this.add.graphics();
+    this.chainSwatchX = x - HUD_GAP / 2 - CHAIN_SWATCH_SIZE;
+    this.chainSwatchY = y - CHAIN_SWATCH_SIZE / 2;
 
-    this.chainText = this.add.text(x + HUD_GAP / 2, y, '×1', {
+    this.chainText = this.add.text(x + HUD_GAP / 2, y, '', {
       fontFamily: FONT_MONO,
       fontSize: HUD_NUMBER_SIZE,
       color: toCssColor(COLORS.canvas),
@@ -263,7 +268,16 @@ export default class GameScene extends Phaser.Scene {
   updateHud() {
     this.fruitText.setText(this.fruitEaten);
     this.scoreText.setText(this.score);
+    this.chainText.setText('×' + this.chain.value);
+    this.drawChainSwatch();
     this.bestText.setText(this.bestScore);
+  }
+
+  drawChainSwatch() {
+    this.chainSwatch.clear();
+    this.chainSwatch.fillStyle(getPaintColor(this.chain.colorIndex));
+    this.chainSwatch.fillRect(this.chainSwatchX, this.chainSwatchY,
+      CHAIN_SWATCH_SIZE, CHAIN_SWATCH_SIZE);
   }
 
   // Dark layer over the board with "Paused", hidden until P or Esc is pressed
@@ -340,7 +354,7 @@ export default class GameScene extends Phaser.Scene {
     const centreX = cell.x * CELL_SIZE + CELL_SIZE / 2;
     const centreY = cell.y * CELL_SIZE + CELL_SIZE / 2;
 
-    this.brush.fillStyle(getPaintColor(this.snakeColorIndex));
+    this.brush.fillStyle(getPaintColor(this.chain.colorIndex));
     this.brush.fillCircle(centreX, centreY, SPLAT_RADIUS);
 
     for (let i = 0; i < SPLAT_DROPS; i++) {
@@ -426,7 +440,7 @@ export default class GameScene extends Phaser.Scene {
     const y = BOARD_Y + cell.y * CELL_SIZE + inset;
     const size = CELL_SIZE - inset * 2;
 
-    g.fillStyle(getPaintColor(this.snakeColorIndex));
+    g.fillStyle(getPaintColor(this.chain.colorIndex));
     g.fillRect(x, y, size, size);
     g.lineStyle(SNAKE_OUTLINE, COLORS.ink);
     g.strokeRect(x, y, size, size);

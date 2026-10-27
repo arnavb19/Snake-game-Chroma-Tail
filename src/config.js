@@ -1,5 +1,8 @@
 // Every tunable number in the game lives here.
 
+// Set to true to run self-checks in the browser console on page load
+export const DEBUG = false;
+
 // Board
 export const GRID_COLS = 28;
 export const GRID_ROWS = 20;
