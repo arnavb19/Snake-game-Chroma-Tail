@@ -66,6 +66,7 @@ export const GAME_OVER_PADDING = 12;
 // Paint and chains
 export const PAINT_OPACITY = 0.35;
 export const GRAPHITE = -1; // colour index for the snake before its first fruit
+export const STAIN = -2;    // colour index for the dark stain a blob leaves behind
 export const CHAIN_CAP = 5;
 
 // Splat left on the cell where a fruit was eaten (pixels)
@@ -73,6 +74,22 @@ export const SPLAT_RADIUS = 16;        // a bit wider than a cell
 export const SPLAT_DROPS = 3;          // small drips around the main blob
 export const SPLAT_DROP_RADIUS = 3;
 export const SPLAT_DROP_DISTANCE = 17; // from the cell centre
+
+// Drying paint: uneaten fruit dries into a temporary 1-cell wall (a blob)
+export const DRY_START_FRUIT = 3;     // drying timers only run once this many fruit are eaten
+export const DRY_MS = 12000;          // how long a fruit takes to dry
+export const DRY_MS_DEBUG = null;     // testing only: set to e.g. 3000 to override DRY_MS
+export const BLOB_MS = 12000;         // how long a blob lasts
+export const BLOB_FADE_MS = 2000;     // a blob fades out over its last this-many ms
+export const DRY_SAFE_DISTANCE = 3;   // a fruit can't dry while the head is this close (Manhattan)
+export const DRIED_FADE_ALPHA = 0.55; // a fully dried fruit's opacity
+export const DRIED_FADE_SCALE = 0.8;  // a fully dried fruit's size
+
+// Blob drawing (pixels)
+export const BLOB_RADIUS = 10;
+export const BLOB_OUTLINE = 2;
+export const BLOB_HATCH_GAP = 4;   // space between cross-hatch lines
+export const BLOB_HATCH_WIDTH = 1;
 
 // Palette
 export const COLORS = {
@@ -82,6 +99,7 @@ export const COLORS = {
   wall: 0x24201D,       // studio wall (page background)
   ink: 0x1F1B18,        // text, outlines, snake head
   graphite: 0x5A5550,   // snake before the first fruit
+  driedUmber: 0x5C4A3D, // dried paint blobs
 };
 
 // The four paint colours. Each fruit shape is unique so colours can be

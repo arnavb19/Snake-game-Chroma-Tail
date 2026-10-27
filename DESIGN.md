@@ -4,10 +4,11 @@
 
 **Snake where every run leaves behind a painting.** The board is a blank canvas. The snake paints the floor in the colour of the last fruit it ate, and eating the same colour in a row builds a score multiplier. When the run ends, the UI fades away and the board is shown as your finished artwork.
 
-Two small systems sit on top of classic Snake, and nothing else changes:
+Three small systems sit on top of classic Snake, and nothing else changes:
 
 - **Paint:** a visual trail that turns each run into a unique picture.
 - **Colour chains:** a light risk-reward choice about which fruit to chase.
+- **Drying paint:** uneaten fruit dries into a temporary wall, so you can't ignore it forever.
 
 Working title: *Chroma Trail*. Alternatives: *Brushstroke*, *Wet Paint*.
 
@@ -69,6 +70,25 @@ Eating a fruit of the snake's current colour raises the chain by 1; any other co
 Example run: red, red, red, blue, blue gives 1 + 2 + 3 + 1 + 2 = **9 points** from **5 fruit**.
 
 With two fruit on the board, every bite is a small decision: chase the matching colour for the multiplier, or take the closer, safer fruit. This is the only reason there are two fruit, and it keeps the chain a choice instead of luck.
+
+## Drying paint
+
+Fruit left uneaten for 12 seconds dries into a dried paint blob: a 1-cell wall that lasts 12 seconds, then flakes away. This adds pressure without a new fruit type, and it pulls against chains: chasing one colour means ignoring the other fruit, and that fruit is drying.
+
+| Setting | Value |
+| --- | --- |
+| Drying starts | After the 3rd fruit of a run |
+| Drying time | 12 s per fruit |
+| Blob lifetime | 12 s, fading over the last 2 s |
+| Safe distance | A fruit can't dry while the head is 3 or fewer cells away (it waits) |
+| Blob colour | Dried umber #5C4A3D with ink cross-hatching |
+
+1. Each fruit has its own drying timer. Timers start at the 3rd fruit eaten (or when the fruit spawns, if later) and pause with the game.
+2. While drying, the fruit fades to 55% opacity and shrinks to 80% size. The timer is shown on the fruit itself, with no numbers or bars.
+3. When a fruit dries, its cell becomes a blob and a replacement fruit spawns straight away, using the normal colour rule. There are still always 2 fruit.
+4. Hitting a blob ends the run, like a wall.
+5. Fruit never spawn on a blob.
+6. When a blob flakes away, it leaves a dark stain in the paint layer, so it shows up in the final artwork.
 
 ## Visual style
 
@@ -177,12 +197,13 @@ Build the game in 8 steps, each ending in something playable you can commit to G
 4. **Score + HUD.** Fruit count and score shown. Classic Snake is complete; tagged `v1-classic`.
 5. **Paint layer.** Head paints cells; snake colour follows the last fruit.
 6. **Colour chains.** Multiplier, chain swatch in the HUD, scoring rules.
+6.5. **Drying paint.** Fruit drying timers, dried paint blobs, flake-away stain.
 7. **Screens.** Title, pause, Exhibition with the museum label, best score and run count saved.
 8. **Polish + deploy.** Feedback touches, optional sound, README, GitHub Pages, test in Chrome and Firefox.
 
 ## Out of scope
 
-Deliberately left out to keep the game simple: obstacles, levels, power-ups, colour blending, a "% painted" goal, speed tied to the multiplier, mobile touch controls, online leaderboards. Downloading the artwork as a PNG is the one extra worth adding if time is left over.
+Deliberately left out to keep the game simple: permanent obstacles, levels, power-ups, colour blending, a "% painted" goal, speed tied to the multiplier, mobile touch controls, online leaderboards. Downloading the artwork as a PNG is the one extra worth adding if time is left over.
 
 ## Decisions
 

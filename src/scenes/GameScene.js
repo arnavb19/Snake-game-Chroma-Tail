@@ -10,7 +10,9 @@ import {
   FRUIT_COUNT, FRUIT_INSET, FRUIT_OUTLINE,
   HUD_LABEL_SIZE, HUD_NUMBER_SIZE, HUD_GAP, CHAIN_SWATCH_SIZE,
   PAUSE_DIM_ALPHA, PAUSE_FONT_SIZE, BEST_SCORE_KEY,
-  PAINT_OPACITY, GRAPHITE,
+  PAINT_OPACITY, GRAPHITE, STAIN,
+  DRY_START_FRUIT, BLOB_FADE_MS, DRIED_FADE_ALPHA, DRIED_FADE_SCALE,
+  BLOB_RADIUS, BLOB_OUTLINE, BLOB_HATCH_GAP, BLOB_HATCH_WIDTH,
   SPLAT_RADIUS, SPLAT_DROPS, SPLAT_DROP_RADIUS, SPLAT_DROP_DISTANCE,
   GAME_OVER_FONT_SIZE, GAME_OVER_PADDING,
 } from '../config.js';
@@ -18,10 +20,22 @@ import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
 import FruitManager from '../systems/FruitManager.js';
 import PaintLayer from '../systems/PaintLayer.js';
 import Chain from '../systems/Chain.js';
+import BlobManager from '../systems/BlobManager.js';
 
-// Turn a colour index (one of PAINTS, or GRAPHITE) into a colour value
+// Turn a colour index (one of PAINTS, GRAPHITE or STAIN) into a colour value
 function getPaintColor(colorIndex) {
-  return colorIndex === GRAPHITE ? COLORS.graphite : PAINTS[colorIndex].color;
+  if (colorIndex === GRAPHITE) {
+    return COLORS.graphite;
+  }
+  if (colorIndex === STAIN) {
+    return COLORS.ink;
+  }
+  return PAINTS[colorIndex].color;
+}
+
+// Blend from `from` to `to` as `amount` goes from 0 to 1
+function lerp(from, to, amount) {
+  return from + (to - from) * amount;
 }
 
 // Phaser text styles want CSS colours like '#1f1b18', not numbers
@@ -54,6 +68,15 @@ const KEY_TO_DIRECTION = {
   ArrowRight: 'right', KeyD: 'right',
 };
 
+// A blob's lumpy outline: the distance of each point from the centre,
+// as a fraction of BLOB_RADIUS, going once around the circle
+const BLOB_LUMPS = [1, 0.82, 0.95, 0.78, 1, 0.86, 0.92, 0.76, 0.98, 0.84];
+
+// A jagged crack across the blob, as offsets from its centre (pixels)
+const BLOB_CRACK = [
+  { x: -5, y: -7 }, { x: -1, y: -3 }, { x: -3, y: 1 }, { x: 2, y: 4 }, { x: 1, y: 8 },
+];
+
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
@@ -77,10 +100,12 @@ export default class GameScene extends Phaser.Scene {
     this.score = 0;
     this.bestScore = loadBestScore();
 
-    this.fruit = new FruitManager(GRID_COLS, GRID_ROWS, PAINTS.length, FRUIT_COUNT);
+    this.blobs = new BlobManager();
+    this.fruit = new FruitManager(GRID_COLS, GRID_ROWS, PAINTS.length, FRUIT_COUNT, this.blobs);
     this.fruit.fillBoard(this.snake);
 
-    // Fruit graphics come first so the snake is drawn on top
+    // Blobs and fruit graphics come first so the snake is drawn on top
+    this.blobGraphics = this.add.graphics();
     this.fruitGraphics = this.add.graphics();
     this.snakeGraphics = this.add.graphics();
     this.drawFruit();
@@ -90,6 +115,36 @@ export default class GameScene extends Phaser.Scene {
     this.createPauseOverlay();
     this.setUpInput();
     this.startMoveTimer(START_MOVE_MS);
+  }
+
+  // Runs every frame. `delta` is the ms since the last frame; skipping it while
+  // paused means drying and blob timers only count game time.
+  update(time, delta) {
+    if (this.isOver || this.isPaused) {
+      return;
+    }
+
+    this.updateBlobs(delta);
+
+    const isDrying = this.fruitEaten >= DRY_START_FRUIT;
+    const hasRoom = this.fruit.update(delta, this.snake, isDrying);
+    this.drawFruit();
+
+    if (!hasRoom) {
+      this.endRun('Board full, you win! Space to restart');
+    }
+  }
+
+  // Count blobs down, and leave a dark stain where each expired one was
+  updateBlobs(delta) {
+    const expired = this.blobs.update(delta);
+    for (const blob of expired) {
+      this.paintLayer.paint(blob.x, blob.y, STAIN);
+    }
+    if (expired.length > 0) {
+      this.drawPaintChanges();
+    }
+    this.drawBlobs();
   }
 
   // Move on a fixed tick, not every frame. Called again whenever the speed changes.
@@ -153,7 +208,8 @@ export default class GameScene extends Phaser.Scene {
     const next = this.snake.getNextHead(direction);
     const isEating = this.fruit.hasFruitAt(next);
 
-    if (!this.isOnBoard(next) || this.snake.hitsBody(next, isEating)) {
+    if (!this.isOnBoard(next) || this.snake.hitsBody(next, isEating)
+      || this.blobs.isBlocked(next.x, next.y)) {
       this.endRun('Game over, Space to restart');
       return;
     }
@@ -381,18 +437,21 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // A paint dab in the fruit's colour and shape, with an ink outline
+  // A paint dab in the fruit's colour and shape, with an ink outline.
+  // As it dries it fades and shrinks, which shows its timer without numbers.
   drawFruitShape(fruit) {
     const g = this.fruitGraphics;
     const paint = PAINTS[fruit.colorIndex];
-    const left = BOARD_X + fruit.x * CELL_SIZE + FRUIT_INSET;
-    const top = BOARD_Y + fruit.y * CELL_SIZE + FRUIT_INSET;
-    const size = CELL_SIZE - FRUIT_INSET * 2;
-    const centreX = left + size / 2;
-    const centreY = top + size / 2;
+    const dryProgress = this.fruit.getDryProgress(fruit);
+    const alpha = lerp(1, DRIED_FADE_ALPHA, dryProgress);
+    const size = (CELL_SIZE - FRUIT_INSET * 2) * lerp(1, DRIED_FADE_SCALE, dryProgress);
+    const centreX = BOARD_X + fruit.x * CELL_SIZE + CELL_SIZE / 2;
+    const centreY = BOARD_Y + fruit.y * CELL_SIZE + CELL_SIZE / 2;
+    const left = centreX - size / 2;
+    const top = centreY - size / 2;
 
-    g.fillStyle(paint.color);
-    g.lineStyle(FRUIT_OUTLINE, COLORS.ink);
+    g.fillStyle(paint.color, alpha);
+    g.lineStyle(FRUIT_OUTLINE, COLORS.ink, alpha);
 
     if (paint.shape === 'circle') {
       g.fillCircle(centreX, centreY, size / 2);
@@ -419,6 +478,64 @@ export default class GameScene extends Phaser.Scene {
     }
     // diamond
     return [{ x: middleX, y: top }, { x: right, y: middleY }, { x: middleX, y: bottom }, { x: left, y: middleY }];
+  }
+
+  drawBlobs() {
+    this.blobGraphics.clear();
+    for (const blob of this.blobs.blobs) {
+      this.drawBlob(blob);
+    }
+  }
+
+  // A lumpy dried-umber dab with ink cross-hatching and a pale crack.
+  // It fades out over its last BLOB_FADE_MS.
+  drawBlob(blob) {
+    const g = this.blobGraphics;
+    const alpha = Math.min(1, blob.msLeft / BLOB_FADE_MS);
+    const centreX = BOARD_X + blob.x * CELL_SIZE + CELL_SIZE / 2;
+    const centreY = BOARD_Y + blob.y * CELL_SIZE + CELL_SIZE / 2;
+
+    const outline = BLOB_LUMPS.map((lump, i) => {
+      const angle = (i / BLOB_LUMPS.length) * Math.PI * 2;
+      return {
+        x: centreX + Math.cos(angle) * BLOB_RADIUS * lump,
+        y: centreY + Math.sin(angle) * BLOB_RADIUS * lump,
+      };
+    });
+    g.fillStyle(COLORS.driedUmber, alpha);
+    g.fillPoints(outline, true);
+
+    this.drawCrossHatching(centreX, centreY, alpha);
+
+    const crack = BLOB_CRACK.map((point) => ({ x: centreX + point.x, y: centreY + point.y }));
+    g.lineStyle(BLOB_OUTLINE, COLORS.canvas, alpha);
+    g.strokePoints(crack, false);
+
+    g.lineStyle(BLOB_OUTLINE, COLORS.ink, alpha);
+    g.strokePoints(outline, true);
+  }
+
+  // Two sets of diagonal ink lines (\ and /), kept inside a circle
+  // smaller than the blob's narrowest lump so they never poke out
+  drawCrossHatching(centreX, centreY, alpha) {
+    const g = this.blobGraphics;
+    const radius = BLOB_RADIUS * Math.min(...BLOB_LUMPS) - BLOB_OUTLINE;
+    const s = Math.SQRT1_2; // cos and sin of 45°
+    const first = -Math.floor(radius / BLOB_HATCH_GAP) * BLOB_HATCH_GAP;
+
+    g.lineStyle(BLOB_HATCH_WIDTH, COLORS.ink, alpha);
+    // `offset` is each line's distance from the centre; `half` is half its length
+    for (let offset = first; offset < radius; offset += BLOB_HATCH_GAP) {
+      const half = Math.sqrt(radius * radius - offset * offset);
+      g.lineBetween(
+        centreX + (offset - half) * s, centreY - (offset + half) * s,
+        centreX + (offset + half) * s, centreY - (offset - half) * s
+      );
+      g.lineBetween(
+        centreX + (offset + half) * s, centreY + (offset - half) * s,
+        centreX + (offset - half) * s, centreY + (offset + half) * s
+      );
+    }
   }
 
   drawSnake() {
