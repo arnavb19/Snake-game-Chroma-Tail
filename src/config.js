@@ -21,6 +21,17 @@ export const BOARD_Y = HUD_HEIGHT + FRAME_WIDTH;
 
 // Snake
 export const START_LENGTH = 3;
+export const START_COL = 8;   // head column, left of centre
+export const START_ROW = 10;  // middle row
+export const MAX_QUEUED_TURNS = 2;
+
+// Snake drawing (pixels)
+export const SNAKE_OUTLINE = 2;
+export const BODY_INSET = 3;  // gap between a body segment and its cell edge
+export const HEAD_INSET = 1;  // smaller gap, so the head looks slightly larger
+export const EYE_RADIUS = 2.5;
+export const EYE_FORWARD = 4; // how far the eyes sit towards the front of the head
+export const EYE_SPREAD = 5;  // how far each eye sits from the head's centre line
 
 // Speed (milliseconds per move)
 export const START_MOVE_MS = 130;

@@ -188,4 +188,4 @@ Deliberately left out to keep the game simple: obstacles, levels, power-ups, col
 
 - Name: Chroma Trail
 - Sound: TBD
-- WASD as well as arrow keys: TBD
+- WASD as well as arrow keys: Yes
