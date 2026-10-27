@@ -2,12 +2,21 @@
 import {
   GRID_COLS, GRID_ROWS, CELL_SIZE,
   BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT,
-  FRAME_WIDTH, COLORS,
-  START_LENGTH, START_COL, START_ROW, START_MOVE_MS, MAX_QUEUED_TURNS,
+  FRAME_WIDTH, COLORS, PAINTS, FONT_SERIF,
+  START_LENGTH, START_COL, START_ROW, MAX_QUEUED_TURNS,
+  START_MOVE_MS, MIN_MOVE_MS, SPEED_UP_MS,
   SNAKE_OUTLINE, BODY_INSET, HEAD_INSET,
   EYE_RADIUS, EYE_FORWARD, EYE_SPREAD,
+  FRUIT_COUNT, FRUIT_INSET, FRUIT_OUTLINE,
+  GAME_OVER_FONT_SIZE, GAME_OVER_PADDING,
 } from '../config.js';
 import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
+import FruitManager from '../systems/FruitManager.js';
+
+// Phaser text styles want CSS colours like '#1f1b18', not numbers
+function toCssColor(color) {
+  return '#' + color.toString(16).padStart(6, '0');
+}
 
 // Arrow keys and WASD both steer (event.code is the physical key)
 const KEY_TO_DIRECTION = {
@@ -29,14 +38,28 @@ export default class GameScene extends Phaser.Scene {
 
     this.snake = new Snake(START_COL, START_ROW, START_LENGTH);
     this.turnQueue = [];
+
+    this.fruit = new FruitManager(GRID_COLS, GRID_ROWS, PAINTS.length, FRUIT_COUNT);
+    this.fruit.fillBoard(this.snake);
+
+    // Fruit graphics come first so the snake is drawn on top
+    this.fruitGraphics = this.add.graphics();
     this.snakeGraphics = this.add.graphics();
+    this.drawFruit();
     this.drawSnake();
 
     this.setUpInput();
+    this.startMoveTimer(START_MOVE_MS);
+  }
 
-    // Move on a fixed tick, not every frame
+  // Move on a fixed tick, not every frame. Called again whenever the speed changes.
+  startMoveTimer(delay) {
+    if (this.moveTimer) {
+      this.moveTimer.remove();
+    }
+    this.moveDelay = delay;
     this.moveTimer = this.time.addEvent({
-      delay: START_MOVE_MS,
+      delay,
       loop: true,
       callback: this.tick,
       callbackScope: this,
@@ -45,7 +68,7 @@ export default class GameScene extends Phaser.Scene {
 
   setUpInput() {
     // Stop the arrow keys from scrolling the page
-    this.input.keyboard.addCapture('UP,DOWN,LEFT,RIGHT');
+    this.input.keyboard.addCapture('UP,DOWN,LEFT,RIGHT,SPACE');
 
     this.input.keyboard.on('keydown', (event) => {
       const direction = KEY_TO_DIRECTION[event.code];
@@ -74,15 +97,49 @@ export default class GameScene extends Phaser.Scene {
 
   tick() {
     const direction = this.turnQueue.shift() || this.snake.direction;
+    const next = this.snake.getNextHead(direction);
+    const isEating = this.fruit.hasFruitAt(next);
 
-    // Wall hit: just stop for now (game over comes in step 3)
-    if (!this.isOnBoard(this.snake.getNextHead(direction))) {
-      this.moveTimer.remove();
+    if (!this.isOnBoard(next) || this.snake.hitsBody(next, isEating)) {
+      this.endRun('Game over, Space to restart');
       return;
     }
 
-    this.snake.move(direction);
+    this.snake.move(direction, isEating);
     this.drawSnake();
+
+    if (isEating) {
+      this.eatFruit(next);
+    }
+  }
+
+  eatFruit(cell) {
+    const hasRoom = this.fruit.eatAt(cell, this.snake);
+    this.drawFruit();
+
+    if (!hasRoom) {
+      this.endRun('Board full, you win! Space to restart');
+      return;
+    }
+
+    const delay = Math.max(MIN_MOVE_MS, this.moveDelay - SPEED_UP_MS);
+    this.startMoveTimer(delay);
+  }
+
+  // Temporary game over: freeze the board and wait for Space.
+  // The Exhibition screen replaces this in step 7.
+  endRun(message) {
+    this.moveTimer.remove();
+
+    this.add.text(BOARD_X + BOARD_WIDTH / 2, BOARD_Y + BOARD_HEIGHT / 2, message, {
+      fontFamily: FONT_SERIF,
+      fontSize: GAME_OVER_FONT_SIZE,
+      color: toCssColor(COLORS.ink),
+      backgroundColor: toCssColor(COLORS.canvas),
+      padding: { x: GAME_OVER_PADDING, y: GAME_OVER_PADDING },
+    }).setOrigin(0.5);
+
+    this.input.keyboard.once('keydown-SPACE', () => this.scene.restart());
   }
 
   isOnBoard(cell) {
@@ -121,6 +178,54 @@ export default class GameScene extends Phaser.Scene {
       const y = BOARD_Y + row * CELL_SIZE + 0.5;
       g.lineBetween(BOARD_X, y, BOARD_X + BOARD_WIDTH, y);
     }
+  }
+
+  drawFruit() {
+    const g = this.fruitGraphics;
+    g.clear();
+    for (const fruit of this.fruit.fruits) {
+      this.drawFruitShape(fruit);
+    }
+  }
+
+  // A paint dab in the fruit's colour and shape, with an ink outline
+  drawFruitShape(fruit) {
+    const g = this.fruitGraphics;
+    const paint = PAINTS[fruit.colorIndex];
+    const left = BOARD_X + fruit.x * CELL_SIZE + FRUIT_INSET;
+    const top = BOARD_Y + fruit.y * CELL_SIZE + FRUIT_INSET;
+    const size = CELL_SIZE - FRUIT_INSET * 2;
+    const centreX = left + size / 2;
+    const centreY = top + size / 2;
+
+    g.fillStyle(paint.color);
+    g.lineStyle(FRUIT_OUTLINE, COLORS.ink);
+
+    if (paint.shape === 'circle') {
+      g.fillCircle(centreX, centreY, size / 2);
+      g.strokeCircle(centreX, centreY, size / 2);
+    } else if (paint.shape === 'square') {
+      g.fillRect(left, top, size, size);
+      g.strokeRect(left, top, size, size);
+    } else {
+      const points = this.getCornerPoints(paint.shape, left, top, size);
+      g.fillPoints(points, true);
+      g.strokePoints(points, true);
+    }
+  }
+
+  // Corner points for the triangle and diamond fruit
+  getCornerPoints(shape, left, top, size) {
+    const right = left + size;
+    const bottom = top + size;
+    const middleX = left + size / 2;
+    const middleY = top + size / 2;
+
+    if (shape === 'triangle') {
+      return [{ x: middleX, y: top }, { x: right, y: bottom }, { x: left, y: bottom }];
+    }
+    // diamond
+    return [{ x: middleX, y: top }, { x: right, y: middleY }, { x: middleX, y: bottom }, { x: left, y: middleY }];
   }
 
   drawSnake() {

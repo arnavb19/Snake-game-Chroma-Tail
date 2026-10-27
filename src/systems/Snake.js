@@ -46,4 +46,11 @@ export default class Snake {
   isOccupied(cell) {
     return this.body.some((part) => part.x === cell.x && part.y === cell.y);
   }
+
+  // Would the head hit the body by entering `cell`?
+  // When not growing, the tail leaves its cell this tick, so that cell is safe.
+  hitsBody(cell, grow) {
+    const parts = grow ? this.body : this.body.slice(0, -1);
+    return parts.some((part) => part.x === cell.x && part.y === cell.y);
+  }
 }

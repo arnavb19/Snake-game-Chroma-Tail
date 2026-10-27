@@ -40,6 +40,12 @@ export const SPEED_UP_MS = 3; // faster by this much per fruit eaten
 
 // Fruit
 export const FRUIT_COUNT = 2;
+export const FRUIT_INSET = 4;   // gap between a fruit and its cell edge (pixels)
+export const FRUIT_OUTLINE = 2;
+
+// Temporary game-over message (replaced by the Exhibition screen in step 7)
+export const GAME_OVER_FONT_SIZE = 28;
+export const GAME_OVER_PADDING = 12;
 
 // Paint and chains
 export const PAINT_OPACITY = 0.35;
