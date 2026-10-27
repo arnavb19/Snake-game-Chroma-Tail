@@ -5,23 +5,25 @@ import {
   GAME_WIDTH, HUD_HEIGHT, COLORS, PAINTS, FONT_SERIF, FONT_MONO,
   START_LENGTH, START_COL, START_ROW, MAX_QUEUED_TURNS,
   START_MOVE_MS, MIN_MOVE_MS, SPEED_UP_MS,
-  SNAKE_OUTLINE, BODY_INSET, HEAD_INSET,
-  EYE_RADIUS, EYE_FORWARD, EYE_SPREAD,
-  FRUIT_COUNT, FRUIT_INSET, FRUIT_OUTLINE,
+  BODY_INSET, HEAD_INSET, FRUIT_COUNT,
   HUD_LABEL_SIZE, HUD_NUMBER_SIZE, HUD_GAP, CHAIN_SWATCH_SIZE,
   PAUSE_DIM_ALPHA, PAUSE_FONT_SIZE, BEST_SCORE_KEY, RUN_COUNT_KEY,
   STAIN, INPUT_DELAY_MS, RENDER_SCALE, DEATH_FADE_MS, DEATH_SPLAT_RADIUS, DEATH_SPLAT_DROPS,
   DRY_START_FRUIT, BLOB_FADE_MS, DRIED_FADE_ALPHA, DRIED_FADE_SCALE,
-  BLOB_RADIUS, BLOB_OUTLINE, BLOB_HATCH_GAP, BLOB_HATCH_WIDTH,
-  SPLAT_RADIUS, SPLAT_DROPS,
+  SPLAT_RADIUS, SPLAT_DROPS, CHAIN_CAP,
+  POP_SCALE, POP_MS, CHAIN_PULSE_SCALE, CHAIN_PULSE_MS, CHAIN_RING_GAP, CHAIN_RING_WIDTH,
+  CHAIN_SHAKE_PX, CHAIN_SHAKE_MS, CHAIN_SHAKE_REPEATS, DEATH_SHAKE_MS, DEATH_SHAKE_INTENSITY,
 } from '../config.js';
-import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
+import Snake, { isOpposite } from '../systems/Snake.js';
 import FruitManager from '../systems/FruitManager.js';
 import PaintLayer from '../systems/PaintLayer.js';
 import Chain from '../systems/Chain.js';
 import BlobManager from '../systems/BlobManager.js';
 import { loadNumber, saveNumber } from '../systems/storage.js';
-import { setUpCamera, drawBoard, PaintCanvas, getPaintColor, toCssColor } from './drawing.js';
+import {
+  setUpCamera, drawBoard, PaintCanvas, getPaintColor, toCssColor,
+  FRUIT_SIZE, drawFruitShape, drawSnakeSegment, drawEyes, drawBlob,
+} from './drawing.js';
 
 // Blend from `from` to `to` as `amount` goes from 0 to 1
 function lerp(from, to, amount) {
@@ -35,15 +37,6 @@ const KEY_TO_DIRECTION = {
   ArrowLeft: 'left', KeyA: 'left',
   ArrowRight: 'right', KeyD: 'right',
 };
-
-// A blob's lumpy outline: the distance of each point from the centre,
-// as a fraction of BLOB_RADIUS, going once around the circle
-const BLOB_LUMPS = [1, 0.82, 0.95, 0.78, 1, 0.86, 0.92, 0.76, 0.98, 0.84];
-
-// A jagged crack across the blob, as offsets from its centre (pixels)
-const BLOB_CRACK = [
-  { x: -5, y: -7 }, { x: -1, y: -3 }, { x: -3, y: 1 }, { x: 2, y: 4 }, { x: 1, y: 8 },
-];
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -113,9 +106,7 @@ export default class GameScene extends Phaser.Scene {
     for (const blob of expired) {
       this.paintLayer.paint(blob.x, blob.y, STAIN);
     }
-    if (expired.length > 0) {
-      this.drawPaintChanges();
-    }
+    this.drawPaintChanges();
     this.drawBlobs();
   }
 
@@ -206,15 +197,24 @@ export default class GameScene extends Phaser.Scene {
   }
 
   scoreFruit(cell) {
+    const previousChain = this.chain.value;
     const points = this.chain.onEat(this.fruit.getFruitAt(cell).colorIndex);
     this.fruitEaten += 1;
     this.score += points;
     this.bestScore = Math.max(this.bestScore, this.score);
     this.updateHud();
+
+    // Points above 1 mean the same colour again; dropping back to 1 means the chain broke
+    if (points > 1) {
+      this.pulseChainSwatch();
+    } else if (previousChain > 1) {
+      this.shakeChainText();
+    }
   }
 
-  // Splat, replacement fruit and speed-up
+  // Pop, splat, replacement fruit and speed-up
   eatFruit(cell) {
+    this.popFruit(this.fruit.getFruitAt(cell));
     this.paintLayer.splat(cell.x, cell.y, this.chain.colorIndex, SPLAT_RADIUS, SPLAT_DROPS);
     this.drawPaintChanges();
 
@@ -230,8 +230,49 @@ export default class GameScene extends Phaser.Scene {
     this.startMoveTimer(delay);
   }
 
-  // The snake breaks into paint, everything but the painting fades out,
-  // then the Exhibition screen shows the finished artwork.
+  // A copy of the eaten fruit that grows and fades, then removes itself.
+  // It's drawn around its own centre so it scales from the middle.
+  popFruit(fruit) {
+    const centre = this.getCellCentre(fruit);
+    const pop = this.add.graphics({ x: centre.x, y: centre.y });
+    this.drawOneFruit(pop, fruit, 0, 0);
+
+    this.tweens.add({
+      targets: pop,
+      scale: POP_SCALE,
+      alpha: 0,
+      duration: POP_MS,
+      onComplete: () => pop.destroy(),
+    });
+  }
+
+  // The swatch grows and shrinks back once
+  pulseChainSwatch() {
+    this.tweens.killTweensOf(this.chainSwatch);
+    this.chainSwatch.setScale(1);
+    this.tweens.add({
+      targets: this.chainSwatch,
+      scale: CHAIN_PULSE_SCALE,
+      duration: CHAIN_PULSE_MS,
+      yoyo: true,
+    });
+  }
+
+  // The multiplier text jiggles sideways a few times
+  shakeChainText() {
+    this.tweens.killTweensOf(this.chainText);
+    this.chainText.x = this.chainTextX;
+    this.tweens.add({
+      targets: this.chainText,
+      x: this.chainTextX + CHAIN_SHAKE_PX,
+      duration: CHAIN_SHAKE_MS,
+      yoyo: true,
+      repeat: CHAIN_SHAKE_REPEATS,
+    });
+  }
+
+  // The snake breaks into paint and the camera shakes. Then everything but
+  // the painting fades out, and the Exhibition screen shows the finished artwork.
   endRun() {
     this.isOver = true;
     this.moveTimer.remove();
@@ -241,9 +282,11 @@ export default class GameScene extends Phaser.Scene {
     this.drawPaintChanges();
     const stats = this.saveRun();
 
+    this.cameras.main.shake(DEATH_SHAKE_MS, DEATH_SHAKE_INTENSITY);
     this.tweens.add({
       targets: [...this.hudItems, this.snakeGraphics, this.fruitGraphics, this.blobGraphics],
       alpha: 0,
+      delay: DEATH_SHAKE_MS,
       duration: DEATH_FADE_MS,
       onComplete: () => this.scene.start('ExhibitionScene', stats),
     });
@@ -284,6 +327,14 @@ export default class GameScene extends Phaser.Scene {
     return cell.x >= 0 && cell.x < GRID_COLS && cell.y >= 0 && cell.y < GRID_ROWS;
   }
 
+  // Pixel position of a grid cell's centre
+  getCellCentre(cell) {
+    return {
+      x: BOARD_X + cell.x * CELL_SIZE + CELL_SIZE / 2,
+      y: BOARD_Y + cell.y * CELL_SIZE + CELL_SIZE / 2,
+    };
+  }
+
   // Four items spread evenly across the strip: FRUIT, SCORE, chain, BEST
   createHud() {
     const slotWidth = GAME_WIDTH / 4;
@@ -320,12 +371,12 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // A swatch in the current colour, then the multiplier (e.g. ■ ×3)
+  // The swatch is drawn around its own centre so it pulses from the middle.
   createChainItem(x, y) {
-    this.chainSwatch = this.add.graphics();
-    this.chainSwatchX = x - HUD_GAP / 2 - CHAIN_SWATCH_SIZE;
-    this.chainSwatchY = y - CHAIN_SWATCH_SIZE / 2;
+    this.chainSwatch = this.add.graphics({ x: x - HUD_GAP / 2 - CHAIN_SWATCH_SIZE / 2, y });
 
-    this.chainText = this.add.text(x + HUD_GAP / 2, y, '', {
+    this.chainTextX = x + HUD_GAP / 2; // remembered so the text can shake and settle back
+    this.chainText = this.add.text(this.chainTextX, y, '', {
       fontFamily: FONT_MONO,
       fontSize: HUD_NUMBER_SIZE,
       resolution: RENDER_SCALE,
@@ -343,11 +394,19 @@ export default class GameScene extends Phaser.Scene {
     this.bestText.setText(this.bestScore);
   }
 
+  // At the chain cap, a thin ring around the swatch. It's drawn in canvas
+  // colour because ink would vanish against the dark studio wall behind the HUD.
   drawChainSwatch() {
-    this.chainSwatch.clear();
-    this.chainSwatch.fillStyle(getPaintColor(this.chain.colorIndex));
-    this.chainSwatch.fillRect(this.chainSwatchX, this.chainSwatchY,
-      CHAIN_SWATCH_SIZE, CHAIN_SWATCH_SIZE);
+    const g = this.chainSwatch;
+    const half = CHAIN_SWATCH_SIZE / 2;
+    g.clear();
+    g.fillStyle(getPaintColor(this.chain.colorIndex));
+    g.fillRect(-half, -half, CHAIN_SWATCH_SIZE, CHAIN_SWATCH_SIZE);
+
+    if (this.chain.value === CHAIN_CAP) {
+      g.lineStyle(CHAIN_RING_WIDTH, COLORS.canvas);
+      g.strokeCircle(0, 0, half * Math.SQRT2 + CHAIN_RING_GAP); // clears the corners
+    }
   }
 
   // Dark layer over the board with "Paused", hidden until P or Esc is pressed
@@ -374,150 +433,42 @@ export default class GameScene extends Phaser.Scene {
     const g = this.fruitGraphics;
     g.clear();
     for (const fruit of this.fruit.fruits) {
-      this.drawFruitShape(fruit);
+      const centre = this.getCellCentre(fruit);
+      this.drawOneFruit(g, fruit, centre.x, centre.y);
     }
   }
 
-  // A paint dab in the fruit's colour and shape, with an ink outline.
-  // As it dries it fades and shrinks, which shows its timer without numbers.
-  drawFruitShape(fruit) {
-    const g = this.fruitGraphics;
-    const paint = PAINTS[fruit.colorIndex];
+  // Draw a fruit into `g`. As it dries it fades and shrinks,
+  // which shows its timer without numbers.
+  drawOneFruit(g, fruit, centreX, centreY) {
     const dryProgress = this.fruit.getDryProgress(fruit);
     const alpha = lerp(1, DRIED_FADE_ALPHA, dryProgress);
-    const size = (CELL_SIZE - FRUIT_INSET * 2) * lerp(1, DRIED_FADE_SCALE, dryProgress);
-    const centreX = BOARD_X + fruit.x * CELL_SIZE + CELL_SIZE / 2;
-    const centreY = BOARD_Y + fruit.y * CELL_SIZE + CELL_SIZE / 2;
-    const left = centreX - size / 2;
-    const top = centreY - size / 2;
-
-    g.fillStyle(paint.color, alpha);
-    g.lineStyle(FRUIT_OUTLINE, COLORS.ink, alpha);
-
-    if (paint.shape === 'circle') {
-      g.fillCircle(centreX, centreY, size / 2);
-      g.strokeCircle(centreX, centreY, size / 2);
-    } else if (paint.shape === 'square') {
-      g.fillRect(left, top, size, size);
-      g.strokeRect(left, top, size, size);
-    } else {
-      const points = this.getCornerPoints(paint.shape, left, top, size);
-      g.fillPoints(points, true);
-      g.strokePoints(points, true);
-    }
+    const size = FRUIT_SIZE * lerp(1, DRIED_FADE_SCALE, dryProgress);
+    drawFruitShape(g, fruit.colorIndex, centreX, centreY, size, alpha);
   }
 
-  // Corner points for the triangle and diamond fruit
-  getCornerPoints(shape, left, top, size) {
-    const right = left + size;
-    const bottom = top + size;
-    const middleX = left + size / 2;
-    const middleY = top + size / 2;
-
-    if (shape === 'triangle') {
-      return [{ x: middleX, y: top }, { x: right, y: bottom }, { x: left, y: bottom }];
-    }
-    // diamond
-    return [{ x: middleX, y: top }, { x: right, y: middleY }, { x: middleX, y: bottom }, { x: left, y: middleY }];
-  }
-
+  // Each blob fades out over its last BLOB_FADE_MS
   drawBlobs() {
     this.blobGraphics.clear();
     for (const blob of this.blobs.blobs) {
-      this.drawBlob(blob);
-    }
-  }
-
-  // A lumpy dried-umber dab with ink cross-hatching and a pale crack.
-  // It fades out over its last BLOB_FADE_MS.
-  drawBlob(blob) {
-    const g = this.blobGraphics;
-    const alpha = Math.min(1, blob.msLeft / BLOB_FADE_MS);
-    const centreX = BOARD_X + blob.x * CELL_SIZE + CELL_SIZE / 2;
-    const centreY = BOARD_Y + blob.y * CELL_SIZE + CELL_SIZE / 2;
-
-    const outline = BLOB_LUMPS.map((lump, i) => {
-      const angle = (i / BLOB_LUMPS.length) * Math.PI * 2;
-      return {
-        x: centreX + Math.cos(angle) * BLOB_RADIUS * lump,
-        y: centreY + Math.sin(angle) * BLOB_RADIUS * lump,
-      };
-    });
-    g.fillStyle(COLORS.driedUmber, alpha);
-    g.fillPoints(outline, true);
-
-    this.drawCrossHatching(centreX, centreY, alpha);
-
-    const crack = BLOB_CRACK.map((point) => ({ x: centreX + point.x, y: centreY + point.y }));
-    g.lineStyle(BLOB_OUTLINE, COLORS.canvas, alpha);
-    g.strokePoints(crack, false);
-
-    g.lineStyle(BLOB_OUTLINE, COLORS.ink, alpha);
-    g.strokePoints(outline, true);
-  }
-
-  // Two sets of diagonal ink lines (\ and /), kept inside a circle
-  // smaller than the blob's narrowest lump so they never poke out
-  drawCrossHatching(centreX, centreY, alpha) {
-    const g = this.blobGraphics;
-    const radius = BLOB_RADIUS * Math.min(...BLOB_LUMPS) - BLOB_OUTLINE;
-    const s = Math.SQRT1_2; // cos and sin of 45°
-    const first = -Math.floor(radius / BLOB_HATCH_GAP) * BLOB_HATCH_GAP;
-
-    g.lineStyle(BLOB_HATCH_WIDTH, COLORS.ink, alpha);
-    // `offset` is each line's distance from the centre; `half` is half its length
-    for (let offset = first; offset < radius; offset += BLOB_HATCH_GAP) {
-      const half = Math.sqrt(radius * radius - offset * offset);
-      g.lineBetween(
-        centreX + (offset - half) * s, centreY - (offset + half) * s,
-        centreX + (offset + half) * s, centreY - (offset - half) * s
-      );
-      g.lineBetween(
-        centreX + (offset + half) * s, centreY + (offset - half) * s,
-        centreX + (offset - half) * s, centreY + (offset + half) * s
-      );
+      const centre = this.getCellCentre(blob);
+      const alpha = Math.min(1, blob.msLeft / BLOB_FADE_MS);
+      drawBlob(this.blobGraphics, centre.x, centre.y, alpha);
     }
   }
 
   drawSnake() {
     const g = this.snakeGraphics;
+    const color = getPaintColor(this.chain.colorIndex);
     g.clear();
 
     // Tail first, so the head is drawn on top
     for (let i = this.snake.body.length - 1; i > 0; i--) {
-      this.drawSegment(this.snake.body[i], BODY_INSET);
+      const centre = this.getCellCentre(this.snake.body[i]);
+      drawSnakeSegment(g, centre.x, centre.y, BODY_INSET, color);
     }
-    this.drawSegment(this.snake.getHead(), HEAD_INSET);
-    this.drawEyes();
-  }
-
-  // A filled square with an ink outline, shrunk by `inset` on every side
-  drawSegment(cell, inset) {
-    const g = this.snakeGraphics;
-    const x = BOARD_X + cell.x * CELL_SIZE + inset;
-    const y = BOARD_Y + cell.y * CELL_SIZE + inset;
-    const size = CELL_SIZE - inset * 2;
-
-    g.fillStyle(getPaintColor(this.chain.colorIndex));
-    g.fillRect(x, y, size, size);
-    g.lineStyle(SNAKE_OUTLINE, COLORS.ink);
-    g.strokeRect(x, y, size, size);
-  }
-
-  // Two ink dots near the front of the head, one on each side
-  drawEyes() {
-    const g = this.snakeGraphics;
-    const head = this.snake.getHead();
-    const forward = DIRECTIONS[this.snake.direction];
-    const side = { x: -forward.y, y: forward.x }; // forward turned 90°
-
-    const centreX = BOARD_X + head.x * CELL_SIZE + CELL_SIZE / 2;
-    const centreY = BOARD_Y + head.y * CELL_SIZE + CELL_SIZE / 2;
-    const eyesX = centreX + forward.x * EYE_FORWARD;
-    const eyesY = centreY + forward.y * EYE_FORWARD;
-
-    g.fillStyle(COLORS.ink);
-    g.fillCircle(eyesX + side.x * EYE_SPREAD, eyesY + side.y * EYE_SPREAD, EYE_RADIUS);
-    g.fillCircle(eyesX - side.x * EYE_SPREAD, eyesY - side.y * EYE_SPREAD, EYE_RADIUS);
+    const head = this.getCellCentre(this.snake.getHead());
+    drawSnakeSegment(g, head.x, head.y, HEAD_INSET, color);
+    drawEyes(g, head.x, head.y, this.snake.direction);
   }
 }

@@ -70,9 +70,21 @@ export const RUN_COUNT_KEY = 'chromaTrail.runCount';
 // Screens
 export const INPUT_DELAY_MS = 300; // keys are ignored this long after a scene starts
 export const TITLE_FONT_SIZE = 64;
-export const TITLE_HINT_SIZE = 16;
-export const TITLE_HINT_GAP = 28;     // space between the title and the hint lines
+export const TITLE_BOTTOM = 160;      // the title's bottom edge, measured from the canvas top
+export const TITLE_HINT_SIZE = 16;    // "Press Space to start"
+export const TITLE_START_GAP = 44;    // space between the pause line and "Press Space to start"
 export const TITLE_BEST_SIZE = 14;
+// "How to play" list under the title
+export const RULE_FONT_SIZE = 15;
+export const RULE_TOP_GAP = 40;       // title bottom to the centre of the first rule
+export const RULE_SPACING = 34;       // centre to centre of each rule line
+export const RULE_ICON_SCALE = 0.75;  // icons are game cells drawn at this size
+export const RULE_ICON_COLUMN = 40;   // width of the icon column (fits two small fruit)
+export const RULE_ICON_GAP = 12;      // space between the icon column and the text
+export const PAUSE_HINT_SIZE = 13;
+export const PAUSE_HINT_ALPHA = 0.6;
+export const PAUSE_HINT_GAP = 30;     // last rule centre to the pause line centre
+export const RULE_PAIR_GAP = 3;       // space between the two fruit in the chain icon (before scaling)
 export const TITLE_BEST_MARGIN = 24;  // distance of the best score from the canvas bottom
 
 // Death and Exhibition
@@ -84,6 +96,19 @@ export const LABEL_PADDING = 10;      // space between the label text and its ca
 export const LABEL_TOP_GAP = 14;      // space between the frame and the label card
 export const LABEL_HINT_SIZE = 14;
 export const LABEL_FADE_MS = 500;
+
+// Feedback touches
+export const POP_SCALE = 1.4;           // an eaten fruit grows to this size...
+export const POP_MS = 150;              // ...and fades out over this long
+export const CHAIN_PULSE_SCALE = 1.4;   // chain swatch grows this much on chain up
+export const CHAIN_PULSE_MS = 100;      // time to grow (and the same again to shrink back)
+export const CHAIN_RING_GAP = 3;        // space between the swatch corners and the x5 ring
+export const CHAIN_RING_WIDTH = 1;
+export const CHAIN_SHAKE_PX = 3;        // how far the multiplier jiggles on a chain break
+export const CHAIN_SHAKE_MS = 40;       // one jiggle
+export const CHAIN_SHAKE_REPEATS = 2;
+export const DEATH_SHAKE_MS = 120;
+export const DEATH_SHAKE_INTENSITY = 0.004; // fraction of the screen size
 
 // Paint and chains
 export const PAINT_OPACITY = 0.35;
@@ -112,6 +137,13 @@ export const BLOB_RADIUS = 10;
 export const BLOB_OUTLINE = 2;
 export const BLOB_HATCH_GAP = 4;   // space between cross-hatch lines
 export const BLOB_HATCH_WIDTH = 1;
+// A blob's lumpy outline: the distance of each point from the centre,
+// as a fraction of BLOB_RADIUS, going once around the circle
+export const BLOB_LUMPS = [1, 0.82, 0.95, 0.78, 1, 0.86, 0.92, 0.76, 0.98, 0.84];
+// A jagged crack across the blob, as offsets from its centre
+export const BLOB_CRACK = [
+  { x: -5, y: -7 }, { x: -1, y: -3 }, { x: -3, y: 1 }, { x: 2, y: 4 }, { x: 1, y: 8 },
+];
 
 // Palette
 export const COLORS = {

@@ -34,10 +34,6 @@ export default class PaintLayer {
     this.addMark({ kind: 'splat', x, y, colorIndex, radius, dropAngles });
   }
 
-  getColor(x, y) {
-    return this.cells[y][x];
-  }
-
   addMark(mark) {
     this.history.push(mark);
     this.newMarks.push(mark);

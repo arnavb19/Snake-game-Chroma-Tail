@@ -5,7 +5,13 @@ import {
   BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT, FRAME_WIDTH,
   COLORS, PAINTS, GRAPHITE, STAIN, PAINT_OPACITY,
   SPLAT_DROP_RADIUS, SPLAT_DROP_DISTANCE,
+  FRUIT_INSET, FRUIT_OUTLINE, SNAKE_OUTLINE, EYE_RADIUS, EYE_FORWARD, EYE_SPREAD,
+  BLOB_RADIUS, BLOB_OUTLINE, BLOB_HATCH_GAP, BLOB_HATCH_WIDTH, BLOB_LUMPS, BLOB_CRACK,
 } from '../config.js';
+import { DIRECTIONS } from '../systems/Snake.js';
+
+// Width of a full-size fruit
+export const FRUIT_SIZE = CELL_SIZE - FRUIT_INSET * 2;
 
 // Turn a colour index (one of PAINTS, GRAPHITE or STAIN) into a colour value
 export function getPaintColor(colorIndex) {
@@ -127,5 +133,112 @@ export class PaintCanvas {
         SPLAT_DROP_RADIUS
       );
     }
+  }
+}
+
+// Snake, fruit and blobs: used by the game and by the title screen's icons.
+// Each one is drawn into `g` around a centre point.
+
+// A filled square with an ink outline: one cell shrunk by `inset` on every side
+export function drawSnakeSegment(g, centreX, centreY, inset, color) {
+  const size = CELL_SIZE - inset * 2;
+  const x = centreX - size / 2;
+  const y = centreY - size / 2;
+
+  g.fillStyle(color);
+  g.fillRect(x, y, size, size);
+  g.lineStyle(SNAKE_OUTLINE, COLORS.ink);
+  g.strokeRect(x, y, size, size);
+}
+
+// Two ink dots near the front of the head, one on each side
+export function drawEyes(g, centreX, centreY, direction) {
+  const forward = DIRECTIONS[direction];
+  const side = { x: -forward.y, y: forward.x }; // forward turned 90°
+  const eyesX = centreX + forward.x * EYE_FORWARD;
+  const eyesY = centreY + forward.y * EYE_FORWARD;
+
+  g.fillStyle(COLORS.ink);
+  g.fillCircle(eyesX + side.x * EYE_SPREAD, eyesY + side.y * EYE_SPREAD, EYE_RADIUS);
+  g.fillCircle(eyesX - side.x * EYE_SPREAD, eyesY - side.y * EYE_SPREAD, EYE_RADIUS);
+}
+
+// A paint dab in the fruit's colour and shape, with an ink outline
+export function drawFruitShape(g, colorIndex, centreX, centreY, size = FRUIT_SIZE, alpha = 1) {
+  const paint = PAINTS[colorIndex];
+  const left = centreX - size / 2;
+  const top = centreY - size / 2;
+
+  g.fillStyle(paint.color, alpha);
+  g.lineStyle(FRUIT_OUTLINE, COLORS.ink, alpha);
+
+  if (paint.shape === 'circle') {
+    g.fillCircle(centreX, centreY, size / 2);
+    g.strokeCircle(centreX, centreY, size / 2);
+  } else if (paint.shape === 'square') {
+    g.fillRect(left, top, size, size);
+    g.strokeRect(left, top, size, size);
+  } else {
+    const points = getCornerPoints(paint.shape, left, top, size);
+    g.fillPoints(points, true);
+    g.strokePoints(points, true);
+  }
+}
+
+// Corner points for the triangle and diamond fruit
+function getCornerPoints(shape, left, top, size) {
+  const right = left + size;
+  const bottom = top + size;
+  const middleX = left + size / 2;
+  const middleY = top + size / 2;
+
+  if (shape === 'triangle') {
+    return [{ x: middleX, y: top }, { x: right, y: bottom }, { x: left, y: bottom }];
+  }
+  // diamond
+  return [{ x: middleX, y: top }, { x: right, y: middleY }, { x: middleX, y: bottom }, { x: left, y: middleY }];
+}
+
+// A lumpy dried-umber dab with ink cross-hatching and a pale crack
+export function drawBlob(g, centreX, centreY, alpha = 1) {
+  const outline = BLOB_LUMPS.map((lump, i) => {
+    const angle = (i / BLOB_LUMPS.length) * Math.PI * 2;
+    return {
+      x: centreX + Math.cos(angle) * BLOB_RADIUS * lump,
+      y: centreY + Math.sin(angle) * BLOB_RADIUS * lump,
+    };
+  });
+  g.fillStyle(COLORS.driedUmber, alpha);
+  g.fillPoints(outline, true);
+
+  drawCrossHatching(g, centreX, centreY, alpha);
+
+  const crack = BLOB_CRACK.map((point) => ({ x: centreX + point.x, y: centreY + point.y }));
+  g.lineStyle(BLOB_OUTLINE, COLORS.canvas, alpha);
+  g.strokePoints(crack, false);
+
+  g.lineStyle(BLOB_OUTLINE, COLORS.ink, alpha);
+  g.strokePoints(outline, true);
+}
+
+// Two sets of diagonal ink lines (\ and /), kept inside a circle
+// smaller than the blob's narrowest lump so they never poke out
+function drawCrossHatching(g, centreX, centreY, alpha) {
+  const radius = BLOB_RADIUS * Math.min(...BLOB_LUMPS) - BLOB_OUTLINE;
+  const s = Math.SQRT1_2; // cos and sin of 45°
+  const first = -Math.floor(radius / BLOB_HATCH_GAP) * BLOB_HATCH_GAP;
+
+  g.lineStyle(BLOB_HATCH_WIDTH, COLORS.ink, alpha);
+  // `offset` is each line's distance from the centre; `half` is half its length
+  for (let offset = first; offset < radius; offset += BLOB_HATCH_GAP) {
+    const half = Math.sqrt(radius * radius - offset * offset);
+    g.lineBetween(
+      centreX + (offset - half) * s, centreY - (offset + half) * s,
+      centreX + (offset + half) * s, centreY - (offset - half) * s
+    );
+    g.lineBetween(
+      centreX + (offset + half) * s, centreY + (offset - half) * s,
+      centreX + (offset - half) * s, centreY + (offset + half) * s
+    );
   }
 }
