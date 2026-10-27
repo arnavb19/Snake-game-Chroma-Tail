@@ -28,6 +28,11 @@ export default class FruitManager {
     return this.findIndexAt(cell) !== -1;
   }
 
+  // The fruit at `cell`, or undefined if there is none
+  getFruitAt(cell) {
+    return this.fruits[this.findIndexAt(cell)];
+  }
+
   // Remove the fruit at `cell` and spawn its replacement.
   // Returns false if the replacement had nowhere to go.
   eatAt(cell, snake) {

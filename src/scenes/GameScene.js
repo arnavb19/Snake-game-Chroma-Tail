@@ -10,10 +10,18 @@ import {
   FRUIT_COUNT, FRUIT_INSET, FRUIT_OUTLINE,
   HUD_LABEL_SIZE, HUD_NUMBER_SIZE, HUD_GAP, CHAIN_SWATCH_SIZE,
   PAUSE_DIM_ALPHA, PAUSE_FONT_SIZE, BEST_SCORE_KEY,
+  PAINT_OPACITY, GRAPHITE,
+  SPLAT_RADIUS, SPLAT_DROPS, SPLAT_DROP_RADIUS, SPLAT_DROP_DISTANCE,
   GAME_OVER_FONT_SIZE, GAME_OVER_PADDING,
 } from '../config.js';
 import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
 import FruitManager from '../systems/FruitManager.js';
+import PaintLayer from '../systems/PaintLayer.js';
+
+// Turn a colour index (one of PAINTS, or GRAPHITE) into a colour value
+function getPaintColor(colorIndex) {
+  return colorIndex === GRAPHITE ? COLORS.graphite : PAINTS[colorIndex].color;
+}
 
 // Phaser text styles want CSS colours like '#1f1b18', not numbers
 function toCssColor(color) {
@@ -54,8 +62,11 @@ export default class GameScene extends Phaser.Scene {
     this.drawFrame();
     this.drawCanvas();
     this.drawGridLines();
+    this.createPaintTexture();
 
     this.snake = new Snake(START_COL, START_ROW, START_LENGTH);
+    this.snakeColorIndex = GRAPHITE; // becomes the last fruit's colour (step 6 moves this into Chain)
+    this.paintLayer = new PaintLayer(GRID_COLS, GRID_ROWS);
     this.turnQueue = [];
     this.isOver = false;
     this.isPaused = false;
@@ -146,7 +157,13 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    // The snake takes the fruit's colour before painting the cell it enters
+    if (isEating) {
+      this.snakeColorIndex = this.fruit.getFruitAt(next).colorIndex;
+    }
+
     this.snake.move(direction, isEating);
+    this.paintCell(next);
     this.drawSnake();
 
     if (isEating) {
@@ -154,7 +171,13 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  paintCell(cell) {
+    this.paintLayer.paint(cell.x, cell.y, this.snakeColorIndex);
+    this.drawPaintChanges();
+  }
+
   eatFruit(cell) {
+    this.drawSplat(cell);
     this.fruitEaten += 1;
     this.score += 1;
     this.bestScore = Math.max(this.bestScore, this.score);
@@ -291,6 +314,51 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // Paint is drawn at full strength into a texture over the board, and the whole
+  // texture is shown at PAINT_OPACITY. Drawing over a cell then simply replaces
+  // its old colour instead of blending with it.
+  createPaintTexture() {
+    this.paintTexture = this.add.renderTexture(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT)
+      .setOrigin(0)
+      .setAlpha(PAINT_OPACITY);
+
+    // Off-screen brush: shapes are drawn here, stamped into the texture, then cleared
+    this.brush = this.make.graphics({}, false);
+  }
+
+  // Redraw only the cells that changed since last time
+  drawPaintChanges() {
+    for (const cell of this.paintLayer.takeChangedCells()) {
+      this.brush.fillStyle(getPaintColor(cell.colorIndex));
+      this.brush.fillRect(cell.x * CELL_SIZE, cell.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    }
+    this.stampBrush();
+  }
+
+  // A round blob slightly bigger than the cell, with a few small drips around it
+  drawSplat(cell) {
+    const centreX = cell.x * CELL_SIZE + CELL_SIZE / 2;
+    const centreY = cell.y * CELL_SIZE + CELL_SIZE / 2;
+
+    this.brush.fillStyle(getPaintColor(this.snakeColorIndex));
+    this.brush.fillCircle(centreX, centreY, SPLAT_RADIUS);
+
+    for (let i = 0; i < SPLAT_DROPS; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      this.brush.fillCircle(
+        centreX + Math.cos(angle) * SPLAT_DROP_DISTANCE,
+        centreY + Math.sin(angle) * SPLAT_DROP_DISTANCE,
+        SPLAT_DROP_RADIUS
+      );
+    }
+    this.stampBrush();
+  }
+
+  stampBrush() {
+    this.paintTexture.draw(this.brush);
+    this.brush.clear();
+  }
+
   drawFruit() {
     const g = this.fruitGraphics;
     g.clear();
@@ -358,7 +426,7 @@ export default class GameScene extends Phaser.Scene {
     const y = BOARD_Y + cell.y * CELL_SIZE + inset;
     const size = CELL_SIZE - inset * 2;
 
-    g.fillStyle(COLORS.graphite);
+    g.fillStyle(getPaintColor(this.snakeColorIndex));
     g.fillRect(x, y, size, size);
     g.lineStyle(SNAKE_OUTLINE, COLORS.ink);
     g.strokeRect(x, y, size, size);

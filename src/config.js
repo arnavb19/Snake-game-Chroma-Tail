@@ -62,7 +62,14 @@ export const GAME_OVER_PADDING = 12;
 
 // Paint and chains
 export const PAINT_OPACITY = 0.35;
+export const GRAPHITE = -1; // colour index for the snake before its first fruit
 export const CHAIN_CAP = 5;
+
+// Splat left on the cell where a fruit was eaten (pixels)
+export const SPLAT_RADIUS = 16;        // a bit wider than a cell
+export const SPLAT_DROPS = 3;          // small drips around the main blob
+export const SPLAT_DROP_RADIUS = 3;
+export const SPLAT_DROP_DISTANCE = 17; // from the cell centre
 
 // Palette
 export const COLORS = {
