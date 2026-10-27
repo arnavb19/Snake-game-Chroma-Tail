@@ -13,10 +13,17 @@ export const BOARD_HEIGHT = GRID_ROWS * CELL_SIZE;  // 480
 // Layout around the board
 export const HUD_HEIGHT = 56;
 export const FRAME_WIDTH = 12;
+export const LABEL_STRIP_HEIGHT = 84; // space under the frame for the museum label
 
-// Total game size: HUD strip on top, then the framed board
+// Total game size: HUD strip on top, then the framed board, then the label strip
 export const GAME_WIDTH = BOARD_WIDTH + FRAME_WIDTH * 2;                // 696
-export const GAME_HEIGHT = HUD_HEIGHT + BOARD_HEIGHT + FRAME_WIDTH * 2; // 560
+export const GAME_HEIGHT = HUD_HEIGHT + BOARD_HEIGHT + FRAME_WIDTH * 2
+  + LABEL_STRIP_HEIGHT;                                                 // 644
+
+// The canvas is drawn this many times larger than the sizes above, then shrunk
+// to fit the window, so it stays sharp on high-DPI and scaled displays.
+// Scenes zoom their camera by this, so every position stays in base units.
+export const RENDER_SCALE = Math.min(Math.ceil(window.devicePixelRatio || 1) * 2, 3);
 
 // Top-left pixel of the board (inside the frame)
 export const BOARD_X = FRAME_WIDTH;
@@ -58,10 +65,25 @@ export const PAUSE_FONT_SIZE = 36;
 
 // Saved data
 export const BEST_SCORE_KEY = 'chromaTrail.bestScore';
+export const RUN_COUNT_KEY = 'chromaTrail.runCount';
 
-// Temporary game-over message (replaced by the Exhibition screen in step 7)
-export const GAME_OVER_FONT_SIZE = 28;
-export const GAME_OVER_PADDING = 12;
+// Screens
+export const INPUT_DELAY_MS = 300; // keys are ignored this long after a scene starts
+export const TITLE_FONT_SIZE = 64;
+export const TITLE_HINT_SIZE = 16;
+export const TITLE_HINT_GAP = 28;     // space between the title and the hint lines
+export const TITLE_BEST_SIZE = 14;
+export const TITLE_BEST_MARGIN = 24;  // distance of the best score from the canvas bottom
+
+// Death and Exhibition
+export const DEATH_FADE_MS = 600;     // HUD, snake, fruit and blobs fade out this long
+export const DEATH_SPLAT_RADIUS = 12; // each snake segment leaves a splat this big
+export const DEATH_SPLAT_DROPS = 1;
+export const LABEL_FONT_SIZE = 16;
+export const LABEL_PADDING = 10;      // space between the label text and its card edge
+export const LABEL_TOP_GAP = 14;      // space between the frame and the label card
+export const LABEL_HINT_SIZE = 14;
+export const LABEL_FADE_MS = 500;
 
 // Paint and chains
 export const PAINT_OPACITY = 0.35;

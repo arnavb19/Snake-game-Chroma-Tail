@@ -1,5 +1,6 @@
-// 28x20 grid of paint colour indexes (or null for bare canvas). No Phaser.
-// The scene draws it; this file only remembers what colour each cell is.
+// 28x20 grid of paint colour indexes (or null for bare canvas), plus every
+// paint mark in the order it was made. No Phaser.
+// The scenes draw it; this file only remembers what was painted where.
 
 export default class PaintLayer {
   constructor(cols, rows) {
@@ -9,7 +10,10 @@ export default class PaintLayer {
     for (let y = 0; y < rows; y++) {
       this.cells.push(new Array(cols).fill(null));
     }
-    this.changedCells = [];
+    // Splats spill over their cell edges, so the grid alone can't redraw the
+    // artwork. Replaying `history` in order gives exactly the same picture.
+    this.history = [];
+    this.newMarks = [];
   }
 
   // A newer colour simply replaces the old one: no blending
@@ -18,17 +22,31 @@ export default class PaintLayer {
       return;
     }
     this.cells[y][x] = colorIndex;
-    this.changedCells.push({ x, y, colorIndex });
+    this.addMark({ kind: 'cell', x, y, colorIndex });
+  }
+
+  // A round blob centred on a cell, with `dropCount` drips at random angles
+  splat(x, y, colorIndex, radius, dropCount) {
+    const dropAngles = [];
+    for (let i = 0; i < dropCount; i++) {
+      dropAngles.push(Math.random() * Math.PI * 2);
+    }
+    this.addMark({ kind: 'splat', x, y, colorIndex, radius, dropAngles });
   }
 
   getColor(x, y) {
     return this.cells[y][x];
   }
 
-  // Returns the cells painted since the last call, then forgets them
-  takeChangedCells() {
-    const changed = this.changedCells;
-    this.changedCells = [];
-    return changed;
+  addMark(mark) {
+    this.history.push(mark);
+    this.newMarks.push(mark);
+  }
+
+  // Returns the marks made since the last call, then forgets them
+  takeNewMarks() {
+    const marks = this.newMarks;
+    this.newMarks = [];
+    return marks;
   }
 }

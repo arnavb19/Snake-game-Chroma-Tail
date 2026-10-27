@@ -2,62 +2,30 @@
 import {
   GRID_COLS, GRID_ROWS, CELL_SIZE,
   BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT,
-  GAME_WIDTH, HUD_HEIGHT, FRAME_WIDTH, COLORS, PAINTS, FONT_SERIF, FONT_MONO,
+  GAME_WIDTH, HUD_HEIGHT, COLORS, PAINTS, FONT_SERIF, FONT_MONO,
   START_LENGTH, START_COL, START_ROW, MAX_QUEUED_TURNS,
   START_MOVE_MS, MIN_MOVE_MS, SPEED_UP_MS,
   SNAKE_OUTLINE, BODY_INSET, HEAD_INSET,
   EYE_RADIUS, EYE_FORWARD, EYE_SPREAD,
   FRUIT_COUNT, FRUIT_INSET, FRUIT_OUTLINE,
   HUD_LABEL_SIZE, HUD_NUMBER_SIZE, HUD_GAP, CHAIN_SWATCH_SIZE,
-  PAUSE_DIM_ALPHA, PAUSE_FONT_SIZE, BEST_SCORE_KEY,
-  PAINT_OPACITY, GRAPHITE, STAIN,
+  PAUSE_DIM_ALPHA, PAUSE_FONT_SIZE, BEST_SCORE_KEY, RUN_COUNT_KEY,
+  STAIN, INPUT_DELAY_MS, RENDER_SCALE, DEATH_FADE_MS, DEATH_SPLAT_RADIUS, DEATH_SPLAT_DROPS,
   DRY_START_FRUIT, BLOB_FADE_MS, DRIED_FADE_ALPHA, DRIED_FADE_SCALE,
   BLOB_RADIUS, BLOB_OUTLINE, BLOB_HATCH_GAP, BLOB_HATCH_WIDTH,
-  SPLAT_RADIUS, SPLAT_DROPS, SPLAT_DROP_RADIUS, SPLAT_DROP_DISTANCE,
-  GAME_OVER_FONT_SIZE, GAME_OVER_PADDING,
+  SPLAT_RADIUS, SPLAT_DROPS,
 } from '../config.js';
 import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
 import FruitManager from '../systems/FruitManager.js';
 import PaintLayer from '../systems/PaintLayer.js';
 import Chain from '../systems/Chain.js';
 import BlobManager from '../systems/BlobManager.js';
-
-// Turn a colour index (one of PAINTS, GRAPHITE or STAIN) into a colour value
-function getPaintColor(colorIndex) {
-  if (colorIndex === GRAPHITE) {
-    return COLORS.graphite;
-  }
-  if (colorIndex === STAIN) {
-    return COLORS.ink;
-  }
-  return PAINTS[colorIndex].color;
-}
+import { loadNumber, saveNumber } from '../systems/storage.js';
+import { setUpCamera, drawBoard, PaintCanvas, getPaintColor, toCssColor } from './drawing.js';
 
 // Blend from `from` to `to` as `amount` goes from 0 to 1
 function lerp(from, to, amount) {
   return from + (to - from) * amount;
-}
-
-// Phaser text styles want CSS colours like '#1f1b18', not numbers
-function toCssColor(color) {
-  return '#' + color.toString(16).padStart(6, '0');
-}
-
-// Storage can be blocked (e.g. private browsing), so never let it crash the game
-function loadBestScore() {
-  try {
-    return Number(localStorage.getItem(BEST_SCORE_KEY)) || 0;
-  } catch (error) {
-    return 0;
-  }
-}
-
-function saveBestScore(score) {
-  try {
-    localStorage.setItem(BEST_SCORE_KEY, String(score));
-  } catch (error) {
-    // Ignore: the best score just won't be remembered
-  }
 }
 
 // Arrow keys and WASD both steer (event.code is the physical key)
@@ -83,10 +51,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   create() {
-    this.drawFrame();
-    this.drawCanvas();
-    this.drawGridLines();
-    this.createPaintTexture();
+    setUpCamera(this);
+    drawBoard(this);
+    this.paintCanvas = new PaintCanvas(this);
 
     this.snake = new Snake(START_COL, START_ROW, START_LENGTH);
     this.chain = new Chain(); // also holds the snake's colour
@@ -95,10 +62,15 @@ export default class GameScene extends Phaser.Scene {
     this.isOver = false;
     this.isPaused = false;
 
+    // Ignore keys for a moment, so the Space that started this run does nothing here
+    this.inputReady = false;
+    this.time.delayedCall(INPUT_DELAY_MS, () => { this.inputReady = true; });
+
     // FRUIT is the plain count of fruit eaten. SCORE adds up the chain points.
     this.fruitEaten = 0;
     this.score = 0;
-    this.bestScore = loadBestScore();
+    this.previousBest = loadNumber(BEST_SCORE_KEY);
+    this.bestScore = this.previousBest;
 
     this.blobs = new BlobManager();
     this.fruit = new FruitManager(GRID_COLS, GRID_ROWS, PAINTS.length, FRUIT_COUNT, this.blobs);
@@ -131,7 +103,7 @@ export default class GameScene extends Phaser.Scene {
     this.drawFruit();
 
     if (!hasRoom) {
-      this.endRun('Board full, you win! Space to restart');
+      this.endRun();
     }
   }
 
@@ -167,7 +139,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown', (event) => {
       const direction = KEY_TO_DIRECTION[event.code];
-      if (direction && !this.isPaused) {
+      if (direction && !this.isPaused && this.inputReady) {
         this.queueTurn(direction);
       }
     });
@@ -178,7 +150,7 @@ export default class GameScene extends Phaser.Scene {
 
   // P or Esc: freeze the tick and dim the board. The same key resumes.
   togglePause() {
-    if (this.isOver) {
+    if (this.isOver || !this.inputReady) {
       return;
     }
     this.isPaused = !this.isPaused;
@@ -210,7 +182,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (!this.isOnBoard(next) || this.snake.hitsBody(next, isEating)
       || this.blobs.isBlocked(next.x, next.y)) {
-      this.endRun('Game over, Space to restart');
+      this.endRun();
       return;
     }
 
@@ -243,13 +215,14 @@ export default class GameScene extends Phaser.Scene {
 
   // Splat, replacement fruit and speed-up
   eatFruit(cell) {
-    this.drawSplat(cell);
+    this.paintLayer.splat(cell.x, cell.y, this.chain.colorIndex, SPLAT_RADIUS, SPLAT_DROPS);
+    this.drawPaintChanges();
 
     const hasRoom = this.fruit.eatAt(cell, this.snake);
     this.drawFruit();
 
     if (!hasRoom) {
-      this.endRun('Board full, you win! Space to restart');
+      this.endRun();
       return;
     }
 
@@ -257,22 +230,54 @@ export default class GameScene extends Phaser.Scene {
     this.startMoveTimer(delay);
   }
 
-  // Temporary game over: freeze the board and wait for Space.
-  // The Exhibition screen replaces this in step 7.
-  endRun(message) {
+  // The snake breaks into paint, everything but the painting fades out,
+  // then the Exhibition screen shows the finished artwork.
+  endRun() {
     this.isOver = true;
     this.moveTimer.remove();
-    saveBestScore(this.bestScore);
 
-    this.add.text(BOARD_X + BOARD_WIDTH / 2, BOARD_Y + BOARD_HEIGHT / 2, message, {
-      fontFamily: FONT_SERIF,
-      fontSize: GAME_OVER_FONT_SIZE,
-      color: toCssColor(COLORS.ink),
-      backgroundColor: toCssColor(COLORS.canvas),
-      padding: { x: GAME_OVER_PADDING, y: GAME_OVER_PADDING },
-    }).setOrigin(0.5);
+    this.splatSnake();
+    this.stainBlobs();
+    this.drawPaintChanges();
+    const stats = this.saveRun();
 
-    this.input.keyboard.once('keydown-SPACE', () => this.scene.restart());
+    this.tweens.add({
+      targets: [...this.hudItems, this.snakeGraphics, this.fruitGraphics, this.blobGraphics],
+      alpha: 0,
+      duration: DEATH_FADE_MS,
+      onComplete: () => this.scene.start('ExhibitionScene', stats),
+    });
+  }
+
+  // Every segment leaves a splat in the snake's colour
+  splatSnake() {
+    for (const part of this.snake.body) {
+      this.paintLayer.splat(part.x, part.y, this.chain.colorIndex,
+        DEATH_SPLAT_RADIUS, DEATH_SPLAT_DROPS);
+    }
+  }
+
+  // Blobs still on the board become stains, the same as when they expire
+  stainBlobs() {
+    for (const blob of this.blobs.blobs) {
+      this.paintLayer.paint(blob.x, blob.y, STAIN);
+    }
+  }
+
+  // Save the best score and run count, and return what the Exhibition needs
+  saveRun() {
+    const runNumber = loadNumber(RUN_COUNT_KEY) + 1;
+    saveNumber(RUN_COUNT_KEY, runNumber);
+    saveNumber(BEST_SCORE_KEY, this.bestScore);
+
+    return {
+      paintLayer: this.paintLayer,
+      fruitEaten: this.fruitEaten,
+      score: this.score,
+      bestChain: this.chain.best,
+      runNumber,
+      isNewBest: this.score > this.previousBest,
+    };
   }
 
   isOnBoard(cell) {
@@ -284,6 +289,7 @@ export default class GameScene extends Phaser.Scene {
     const slotWidth = GAME_WIDTH / 4;
     const centreY = HUD_HEIGHT / 2;
     const slotCentre = (slot) => slotWidth * slot + slotWidth / 2;
+    this.hudItems = []; // everything in the strip, so it can fade out on death
 
     this.fruitText = this.createHudItem('FRUIT', slotCentre(0), centreY);
     this.scoreText = this.createHudItem('SCORE', slotCentre(1), centreY);
@@ -295,17 +301,22 @@ export default class GameScene extends Phaser.Scene {
   // A Fraunces label ending just left of `x`, and a mono number starting just right of it.
   // Returns the number text so it can be updated.
   createHudItem(label, x, y) {
-    this.add.text(x - HUD_GAP / 2, y, label, {
+    const labelText = this.add.text(x - HUD_GAP / 2, y, label, {
       fontFamily: FONT_SERIF,
       fontSize: HUD_LABEL_SIZE,
+      resolution: RENDER_SCALE,
       color: toCssColor(COLORS.canvas),
     }).setOrigin(1, 0.5);
 
-    return this.add.text(x + HUD_GAP / 2, y, '0', {
+    const numberText = this.add.text(x + HUD_GAP / 2, y, '0', {
       fontFamily: FONT_MONO,
       fontSize: HUD_NUMBER_SIZE,
+      resolution: RENDER_SCALE,
       color: toCssColor(COLORS.canvas),
     }).setOrigin(0, 0.5);
+
+    this.hudItems.push(labelText, numberText);
+    return numberText;
   }
 
   // A swatch in the current colour, then the multiplier (e.g. ■ ×3)
@@ -317,8 +328,11 @@ export default class GameScene extends Phaser.Scene {
     this.chainText = this.add.text(x + HUD_GAP / 2, y, '', {
       fontFamily: FONT_MONO,
       fontSize: HUD_NUMBER_SIZE,
+      resolution: RENDER_SCALE,
       color: toCssColor(COLORS.canvas),
     }).setOrigin(0, 0.5);
+
+    this.hudItems.push(this.chainSwatch, this.chainText);
   }
 
   updateHud() {
@@ -344,89 +358,16 @@ export default class GameScene extends Phaser.Scene {
     const label = this.add.text(BOARD_X + BOARD_WIDTH / 2, BOARD_Y + BOARD_HEIGHT / 2, 'Paused', {
       fontFamily: FONT_SERIF,
       fontSize: PAUSE_FONT_SIZE,
+      resolution: RENDER_SCALE,
       color: toCssColor(COLORS.canvas),
     }).setOrigin(0.5);
 
     this.pauseOverlay = this.add.container(0, 0, [dim, label]).setVisible(false);
   }
 
-  // Walnut frame: one rectangle behind the board, larger by the frame width
-  drawFrame() {
-    const g = this.add.graphics();
-    g.fillStyle(COLORS.frame);
-    g.fillRect(
-      BOARD_X - FRAME_WIDTH,
-      BOARD_Y - FRAME_WIDTH,
-      BOARD_WIDTH + FRAME_WIDTH * 2,
-      BOARD_HEIGHT + FRAME_WIDTH * 2
-    );
-  }
-
-  drawCanvas() {
-    const g = this.add.graphics();
-    g.fillStyle(COLORS.canvas);
-    g.fillRect(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT);
-  }
-
-  // Faint pencil lines between cells (the board edges are left to the frame)
-  drawGridLines() {
-    const g = this.add.graphics();
-    g.lineStyle(1, COLORS.gridLine);
-
-    for (let col = 1; col < GRID_COLS; col++) {
-      const x = BOARD_X + col * CELL_SIZE + 0.5; // +0.5 keeps 1px lines crisp
-      g.lineBetween(x, BOARD_Y, x, BOARD_Y + BOARD_HEIGHT);
-    }
-
-    for (let row = 1; row < GRID_ROWS; row++) {
-      const y = BOARD_Y + row * CELL_SIZE + 0.5;
-      g.lineBetween(BOARD_X, y, BOARD_X + BOARD_WIDTH, y);
-    }
-  }
-
-  // Paint is drawn at full strength into a texture over the board, and the whole
-  // texture is shown at PAINT_OPACITY. Drawing over a cell then simply replaces
-  // its old colour instead of blending with it.
-  createPaintTexture() {
-    this.paintTexture = this.add.renderTexture(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT)
-      .setOrigin(0)
-      .setAlpha(PAINT_OPACITY);
-
-    // Off-screen brush: shapes are drawn here, stamped into the texture, then cleared
-    this.brush = this.make.graphics({}, false);
-  }
-
-  // Redraw only the cells that changed since last time
+  // Draw only the paint marks made since last time
   drawPaintChanges() {
-    for (const cell of this.paintLayer.takeChangedCells()) {
-      this.brush.fillStyle(getPaintColor(cell.colorIndex));
-      this.brush.fillRect(cell.x * CELL_SIZE, cell.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-    }
-    this.stampBrush();
-  }
-
-  // A round blob slightly bigger than the cell, with a few small drips around it
-  drawSplat(cell) {
-    const centreX = cell.x * CELL_SIZE + CELL_SIZE / 2;
-    const centreY = cell.y * CELL_SIZE + CELL_SIZE / 2;
-
-    this.brush.fillStyle(getPaintColor(this.chain.colorIndex));
-    this.brush.fillCircle(centreX, centreY, SPLAT_RADIUS);
-
-    for (let i = 0; i < SPLAT_DROPS; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      this.brush.fillCircle(
-        centreX + Math.cos(angle) * SPLAT_DROP_DISTANCE,
-        centreY + Math.sin(angle) * SPLAT_DROP_DISTANCE,
-        SPLAT_DROP_RADIUS
-      );
-    }
-    this.stampBrush();
-  }
-
-  stampBrush() {
-    this.paintTexture.draw(this.brush);
-    this.brush.clear();
+    this.paintCanvas.drawMarks(this.paintLayer.takeNewMarks());
   }
 
   drawFruit() {
