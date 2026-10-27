@@ -2,12 +2,14 @@
 import {
   GRID_COLS, GRID_ROWS, CELL_SIZE,
   BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT,
-  FRAME_WIDTH, COLORS, PAINTS, FONT_SERIF,
+  GAME_WIDTH, HUD_HEIGHT, FRAME_WIDTH, COLORS, PAINTS, FONT_SERIF, FONT_MONO,
   START_LENGTH, START_COL, START_ROW, MAX_QUEUED_TURNS,
   START_MOVE_MS, MIN_MOVE_MS, SPEED_UP_MS,
   SNAKE_OUTLINE, BODY_INSET, HEAD_INSET,
   EYE_RADIUS, EYE_FORWARD, EYE_SPREAD,
   FRUIT_COUNT, FRUIT_INSET, FRUIT_OUTLINE,
+  HUD_LABEL_SIZE, HUD_NUMBER_SIZE, HUD_GAP, CHAIN_SWATCH_SIZE,
+  PAUSE_DIM_ALPHA, PAUSE_FONT_SIZE, BEST_SCORE_KEY,
   GAME_OVER_FONT_SIZE, GAME_OVER_PADDING,
 } from '../config.js';
 import Snake, { DIRECTIONS, isOpposite } from '../systems/Snake.js';
@@ -16,6 +18,23 @@ import FruitManager from '../systems/FruitManager.js';
 // Phaser text styles want CSS colours like '#1f1b18', not numbers
 function toCssColor(color) {
   return '#' + color.toString(16).padStart(6, '0');
+}
+
+// Storage can be blocked (e.g. private browsing), so never let it crash the game
+function loadBestScore() {
+  try {
+    return Number(localStorage.getItem(BEST_SCORE_KEY)) || 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function saveBestScore(score) {
+  try {
+    localStorage.setItem(BEST_SCORE_KEY, String(score));
+  } catch (error) {
+    // Ignore: the best score just won't be remembered
+  }
 }
 
 // Arrow keys and WASD both steer (event.code is the physical key)
@@ -38,6 +57,13 @@ export default class GameScene extends Phaser.Scene {
 
     this.snake = new Snake(START_COL, START_ROW, START_LENGTH);
     this.turnQueue = [];
+    this.isOver = false;
+    this.isPaused = false;
+
+    // FRUIT is the plain count. SCORE equals it until chains arrive in step 6.
+    this.fruitEaten = 0;
+    this.score = 0;
+    this.bestScore = loadBestScore();
 
     this.fruit = new FruitManager(GRID_COLS, GRID_ROWS, PAINTS.length, FRUIT_COUNT);
     this.fruit.fillBoard(this.snake);
@@ -48,6 +74,8 @@ export default class GameScene extends Phaser.Scene {
     this.drawFruit();
     this.drawSnake();
 
+    this.createHud();
+    this.createPauseOverlay();
     this.setUpInput();
     this.startMoveTimer(START_MOVE_MS);
   }
@@ -72,10 +100,23 @@ export default class GameScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown', (event) => {
       const direction = KEY_TO_DIRECTION[event.code];
-      if (direction) {
+      if (direction && !this.isPaused) {
         this.queueTurn(direction);
       }
     });
+
+    this.input.keyboard.on('keydown-P', () => this.togglePause());
+    this.input.keyboard.on('keydown-ESC', () => this.togglePause());
+  }
+
+  // P or Esc: freeze the tick and dim the board. The same key resumes.
+  togglePause() {
+    if (this.isOver) {
+      return;
+    }
+    this.isPaused = !this.isPaused;
+    this.moveTimer.paused = this.isPaused;
+    this.pauseOverlay.setVisible(this.isPaused);
   }
 
   // Store up to 2 turns so quick double taps (e.g. up then left) both count
@@ -114,6 +155,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   eatFruit(cell) {
+    this.fruitEaten += 1;
+    this.score += 1;
+    this.bestScore = Math.max(this.bestScore, this.score);
+    this.updateHud();
+
     const hasRoom = this.fruit.eatAt(cell, this.snake);
     this.drawFruit();
 
@@ -129,7 +175,9 @@ export default class GameScene extends Phaser.Scene {
   // Temporary game over: freeze the board and wait for Space.
   // The Exhibition screen replaces this in step 7.
   endRun(message) {
+    this.isOver = true;
     this.moveTimer.remove();
+    saveBestScore(this.bestScore);
 
     this.add.text(BOARD_X + BOARD_WIDTH / 2, BOARD_Y + BOARD_HEIGHT / 2, message, {
       fontFamily: FONT_SERIF,
@@ -144,6 +192,69 @@ export default class GameScene extends Phaser.Scene {
 
   isOnBoard(cell) {
     return cell.x >= 0 && cell.x < GRID_COLS && cell.y >= 0 && cell.y < GRID_ROWS;
+  }
+
+  // Four items spread evenly across the strip: FRUIT, SCORE, chain, BEST
+  createHud() {
+    const slotWidth = GAME_WIDTH / 4;
+    const centreY = HUD_HEIGHT / 2;
+    const slotCentre = (slot) => slotWidth * slot + slotWidth / 2;
+
+    this.fruitText = this.createHudItem('FRUIT', slotCentre(0), centreY);
+    this.scoreText = this.createHudItem('SCORE', slotCentre(1), centreY);
+    this.createChainPlaceholder(slotCentre(2), centreY);
+    this.bestText = this.createHudItem('BEST', slotCentre(3), centreY);
+    this.updateHud();
+  }
+
+  // A Fraunces label ending just left of `x`, and a mono number starting just right of it.
+  // Returns the number text so it can be updated.
+  createHudItem(label, x, y) {
+    this.add.text(x - HUD_GAP / 2, y, label, {
+      fontFamily: FONT_SERIF,
+      fontSize: HUD_LABEL_SIZE,
+      color: toCssColor(COLORS.canvas),
+    }).setOrigin(1, 0.5);
+
+    return this.add.text(x + HUD_GAP / 2, y, '0', {
+      fontFamily: FONT_MONO,
+      fontSize: HUD_NUMBER_SIZE,
+      color: toCssColor(COLORS.canvas),
+    }).setOrigin(0, 0.5);
+  }
+
+  // Grey swatch and ×1 for now. Step 6 makes this show the real chain.
+  createChainPlaceholder(x, y) {
+    const g = this.add.graphics();
+    g.fillStyle(COLORS.graphite);
+    g.fillRect(x - HUD_GAP / 2 - CHAIN_SWATCH_SIZE, y - CHAIN_SWATCH_SIZE / 2,
+      CHAIN_SWATCH_SIZE, CHAIN_SWATCH_SIZE);
+
+    this.chainText = this.add.text(x + HUD_GAP / 2, y, '×1', {
+      fontFamily: FONT_MONO,
+      fontSize: HUD_NUMBER_SIZE,
+      color: toCssColor(COLORS.canvas),
+    }).setOrigin(0, 0.5);
+  }
+
+  updateHud() {
+    this.fruitText.setText(this.fruitEaten);
+    this.scoreText.setText(this.score);
+    this.bestText.setText(this.bestScore);
+  }
+
+  // Dark layer over the board with "Paused", hidden until P or Esc is pressed
+  createPauseOverlay() {
+    const dim = this.add.rectangle(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT,
+      COLORS.ink, PAUSE_DIM_ALPHA).setOrigin(0);
+
+    const label = this.add.text(BOARD_X + BOARD_WIDTH / 2, BOARD_Y + BOARD_HEIGHT / 2, 'Paused', {
+      fontFamily: FONT_SERIF,
+      fontSize: PAUSE_FONT_SIZE,
+      color: toCssColor(COLORS.canvas),
+    }).setOrigin(0.5);
+
+    this.pauseOverlay = this.add.container(0, 0, [dim, label]).setVisible(false);
   }
 
   // Walnut frame: one rectangle behind the board, larger by the frame width

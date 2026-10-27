@@ -43,6 +43,19 @@ export const FRUIT_COUNT = 2;
 export const FRUIT_INSET = 4;   // gap between a fruit and its cell edge (pixels)
 export const FRUIT_OUTLINE = 2;
 
+// HUD strip above the frame
+export const HUD_LABEL_SIZE = 14;   // Fraunces labels (pixels)
+export const HUD_NUMBER_SIZE = 20;  // IBM Plex Mono numbers (pixels)
+export const HUD_GAP = 8;           // space between a label and its number
+export const CHAIN_SWATCH_SIZE = 14;
+
+// Pause
+export const PAUSE_DIM_ALPHA = 0.5; // how dark the board gets while paused
+export const PAUSE_FONT_SIZE = 36;
+
+// Saved data
+export const BEST_SCORE_KEY = 'chromaTrail.bestScore';
+
 // Temporary game-over message (replaced by the Exhibition screen in step 7)
 export const GAME_OVER_FONT_SIZE = 28;
 export const GAME_OVER_PADDING = 12;
